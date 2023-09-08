@@ -4,19 +4,15 @@ author: "Ana Romani"
 date: "2023-09-07"
 output: html_document
 ---
-
+Require libraries
 ```{r}
 library(qiime2R)
 library(phyloseq)
 library(ggplot2)
 library(dplyr)
-```
-
-
-```{r}
-# Go to your directory that contain the qza files
-dir <- "C:/Users/Romani Vasquez/Documents/Teach_notes/BioInfo/practice"
-setwd(dir)
+library(ggpubr)
+library(vegan)
+library(reshape2)
 ```
 
 # Exploring data
@@ -79,7 +75,6 @@ wilcox.test(children,mother)
 # Beta diversity
 
 ```{r}
-library(vegan)
 ## OTU-based metrics
 OTUs = physeq_O@otu_table@.Data #To use the “Group” column as the row names so that it will match our metadata
 OTU_final = as.data.frame(t(OTUs)) 
@@ -124,12 +119,9 @@ freq_genus <- as.data.frame(table(taxonomy$Genus))
 taxasums <- summarize_taxa(OTUs, taxonomy)$Genus
 metadata <- read.csv("metadata.tsv",sep = "\t")
 colnames(metadata)[1]<-"SampleID"
-metadata$Group = as.factor(ifelse(grepl(".C",rownames(richness)),"Children","Mother"))
+metadata$Group = as.factor(ifelse(grepl(".C",metadata$SampleID),"Children","Mother"))
 ```
 
-```{r}
-library(reshape2)
-```
 ```{r}
 taxasums_t <- as.data.frame(t(as.matrix(taxasums)))
 taxasums_t$SampleID <- row.names(taxasums_t)
@@ -154,6 +146,14 @@ ggplot(data=long_all_tab_10,aes(x=Group,y=value,fill=variable))+
         legend.text = element_text(size = 5),
         legend.box = "vertical")
 ```
+```{r warning = FALSE}
+taxa_barplot(taxasums,metadata,"Group", normalize = "none")
+```
+```{r warning = FALSE}
+all_sample <- long_all_tab_10$SampleID
+taxasums_10 <- taxasums %>% select(all_sample)
+taxa_barplot(taxasums_10,metadata,"Group", normalize = "none")
+```
 # Generating a phylo seq object
 ```{r}
 physeq_O <- qza_to_phyloseq(
@@ -165,18 +165,33 @@ physeq_O <- qza_to_phyloseq(
 ```
 
 ```{r}
-library(ggpubr)
-a_my_comparisons <- list( "n", "y")
-
-plot_richness(physeq_O, x = "antiexposedall", color = 'antiexposedall', measures = c("Observed", "Chao1","Shannon"), title = "Alpha diversity indices of samples") + 
-  geom_boxplot(alpha = 0.6) +
-  theme(legend.position = "right", axis.text.x=element_text(angle=45, hjust=1, vjust=1, size=12))
-```
-```{r}
 a_my_comparisons <- list( "Vaginal", "Cesarean")
 
 plot_richness(physeq_O, x = "delivery", color = 'delivery', measures = c("Observed", "Chao1","Shannon","Simpson"), title = "Alpha diversity indices of samples") + 
   geom_boxplot(alpha = 0.6) +
   theme(legend.position = "right", axis.text.x=element_text(angle=45, hjust=1, vjust=1, size=12))
 ```
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+metadata <- read.csv("ecam-sample-metadata.tsv",sep = "\t")
+colnames(metadata)[1]<-"SampleID"
+metadata$delivery <- as.factor(metadata$delivery)
+### Ordination scatterplots (Bray-Curtis metric)
+BC.nmds = metaMDS(OTU_final, distance="bray", k=2, trymax=20) 
+data_plot <- as.data.frame(BC.nmds$points)
+data_plot$SampleID = rownames(data_plot)
+data_plot <- merge(metadata[,c(1,4)],data_plot,by="SampleID")
+ggplot(data=data_plot,aes(x=MDS1,y=MDS2,color=delivery)) + geom_point()
+```
+
+
+```{r warning = FALSE}
+## OTU-based metrics
+OTUs = physeq_O@otu_table@.Data #To use the “Group” column as the row names so that it will match our metadata
+OTU_final = as.data.frame(t(OTUs)) 
+taxonomy <- read_qza("bespoke-taxonomy.qza")$data %>% parse_taxonomy()
+freq_genus <- as.data.frame(table(taxonomy$Genus))
+taxasums <- summarize_taxa(OTUs, taxonomy)$Genus
+taxasums_10 <- taxasums[,c(100:110)]
+taxa_barplot(taxasums_10,metadata,"delivery", normalize = "none")
+```
