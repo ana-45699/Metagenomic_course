@@ -1,0 +1,182 @@
+---
+title: "Diversity analysis in R"
+author: "Ana Romani"
+date: "2023-09-07"
+output: html_document
+---
+
+```{r}
+library(qiime2R)
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+```
+
+
+```{r}
+# Go to your directory that contain the qza files
+dir <- "C:/Users/Romani Vasquez/Documents/Teach_notes/BioInfo/practice"
+setwd(dir)
+```
+
+# Exploring data
+```{r}
+SVs <- read_qza("bespoke-taxonomy.qza") 
+names(SVs)
+table_features <- SVs$data
+```
+
+```{r}
+taxon_frequency = as.data.frame(table(table_features$Taxon))
+colnames(taxon_frequency)= c("Taxon","Frequency")
+ggplot(data= taxon_frequency,aes(x=Taxon,y=Frequency))+ geom_histogram(stat = "identity")
+ggplot(data= taxon_frequency,aes(x=Frequency))+ 
+  geom_histogram(bins=50)+
+  xlim(0,100)
+```
+# Generating a phylo seq object
+```{r}
+physeq_O <- qza_to_phyloseq(
+  features = "table-deblur.qza",
+  taxonomy = "bespoke-taxonomy.qza",
+  metadata = "metadata.tsv"
+)
+```
+# Estimate alpha diversity index based on phylo seq object
+```{r}
+richness <- estimate_richness(physeq_O)
+richness$group = as.factor(ifelse(grepl(".C",rownames(richness)),"Children","Mother"))
+```
+You can also embed plots, for example:
+
+```{r}
+ggplot(data = richness,aes(x=group,y=Observed,color=group))+geom_boxplot()
+```
+
+```{r}
+chao <-ggplot(data = richness,aes(x=group,y=Chao1,color=group))+geom_boxplot()+xlab("")
+shannon <- ggplot(data = richness,aes(x=group,y=Shannon,color=group))+geom_boxplot()+xlab("")
+simpson <- ggplot(data = richness,aes(x=group,y=Simpson,color=group))+geom_boxplot()+xlab("")
+ggpubr::ggarrange(chao,shannon,simpson,ncol = 3,nrow = 1,common.legend = T)
+```
+# Significant test
+The indexes have a significant difference?
+## Check the distribution
+```{r}
+histogram(richness$Shannon)
+#qqplot(richness$Shannon)
+```
+# No parametric test
+# Mann U withney test
+```{r}
+children <- richness %>% filter(group=="Children")
+children <- as.vector(children$Shannon)
+mother <- richness %>% filter(group=="Mother")
+mother <- as.vector(mother$Shannon)
+wilcox.test(children,mother)
+```
+
+# Beta diversity
+
+```{r}
+library(vegan)
+## OTU-based metrics
+OTUs = physeq_O@otu_table@.Data #To use the “Group” column as the row names so that it will match our metadata
+OTU_final = as.data.frame(t(OTUs)) 
+BC.dist= as.matrix(vegdist(OTU_final, distance="bray"))
+```
+
+```{r}
+### Ordination scatterplots (Bray-Curtis metric)
+BC.nmds = metaMDS(OTU_final, distance="bray", k=2, trymax=20) 
+# check the stress is lower than 0.2
+```
+
+```{r}
+metadata <- read.csv("metadata.tsv",sep = "\t")
+colnames(metadata)[1]<-"SampleID"
+metadata$Group = as.factor(ifelse(grepl(".C",metadata$SampleID),"Children","Mother"))
+data_plot <- as.data.frame(BC.nmds$points)
+data_plot$SampleID = rownames(data_plot)
+data_plot <- merge(metadata[,c(1,5)],data_plot,by="SampleID")
+ggplot(data=data_plot,aes(x=MDS1,y=MDS2,color=Group)) + geom_point()
+```
+```{r}
+#### Plot the nMDS
+par(mfrow = c(1, 1))
+##### Create a blank plot for the NMDS
+plot(BC.nmds, type="n", main="Bray-Curtis")
+##### Add the points colored by age
+points(BC.nmds, pch=20, col=c("skyblue", "pink")[metadata$Group])
+##### Add a legend
+legend(0.2,-0.04,legend=c("Children","Mother"), col=c("skyblue","pink"), pch=20)
+```
+
+# Permutational multivariate analysis
+```{r}
+adonis2(BC.dist ~ Group, data = metadata, permutations = 100)
+```
+
+# Taxonomic ranges
+```{r}
+taxonomy <- read_qza("bespoke-taxonomy.qza")$data %>% parse_taxonomy()
+freq_genus <- as.data.frame(table(taxonomy$Genus))
+taxasums <- summarize_taxa(OTUs, taxonomy)$Genus
+metadata <- read.csv("metadata.tsv",sep = "\t")
+colnames(metadata)[1]<-"SampleID"
+metadata$Group = as.factor(ifelse(grepl(".C",rownames(richness)),"Children","Mother"))
+```
+
+```{r}
+library(reshape2)
+```
+```{r}
+taxasums_t <- as.data.frame(t(as.matrix(taxasums)))
+taxasums_t$SampleID <- row.names(taxasums_t)
+all_tab <- merge(metadata[,c(1,5)],taxasums_t,by="SampleID")
+long_all_tab <- melt(all_tab,id=c("SampleID","Group"))
+```
+
+```{r}
+long_child_tab_10 <-long_all_tab %>% 
+  filter(Group=="Children")%>%
+  arrange(desc(value))%>%
+  slice_head(n=10)
+long_mother_tab_10 <-long_all_tab %>% 
+  filter(Group=="Mother")%>%
+  arrange(desc(value))%>%
+  slice_head(n=10)
+long_all_tab_10 <- rbind(long_child_tab_10,long_mother_tab_10)
+ggplot(data=long_all_tab_10,aes(x=Group,y=value,fill=variable))+
+  geom_bar(stat = "identity")+
+  labs(fill = "Taxonomic range")+
+  theme(legend.position = "right",
+        legend.text = element_text(size = 5),
+        legend.box = "vertical")
+```
+# Generating a phylo seq object
+```{r}
+physeq_O <- qza_to_phyloseq(
+  features = "table-deblur.qza",
+  tree = "insertion-tree.qza",
+  taxonomy = "bespoke-taxonomy.qza",
+  metadata = "ecam-sample-metadata.tsv"
+)
+```
+
+```{r}
+library(ggpubr)
+a_my_comparisons <- list( "n", "y")
+
+plot_richness(physeq_O, x = "antiexposedall", color = 'antiexposedall', measures = c("Observed", "Chao1","Shannon"), title = "Alpha diversity indices of samples") + 
+  geom_boxplot(alpha = 0.6) +
+  theme(legend.position = "right", axis.text.x=element_text(angle=45, hjust=1, vjust=1, size=12))
+```
+```{r}
+a_my_comparisons <- list( "Vaginal", "Cesarean")
+
+plot_richness(physeq_O, x = "delivery", color = 'delivery', measures = c("Observed", "Chao1","Shannon","Simpson"), title = "Alpha diversity indices of samples") + 
+  geom_boxplot(alpha = 0.6) +
+  theme(legend.position = "right", axis.text.x=element_text(angle=45, hjust=1, vjust=1, size=12))
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
